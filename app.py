@@ -10,8 +10,6 @@ from cryptography.fernet import Fernet
 import base64
 import hashlib
 
-print(f"OpenAI library version: {openai.__version__}")
-
 app = Flask(__name__)
 
 # 環境変数からAPIキーを取得
