@@ -117,6 +117,55 @@ def handle_message(event):
     
     line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply))
 
+def save_user_info(user_id, birthdate, birthtime, birthplace, name):
+    """ユーザー情報をデータベースに保存"""
+    conn = sqlite3.connect("users.db", check_same_thread=False)
+    c = conn.cursor()
+    c.execute("""
+        INSERT INTO users (user_id, birthdate, birthtime, birthplace, name)
+        VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT(user_id) DO UPDATE SET
+            birthdate=excluded.birthdate,
+            birthtime=excluded.birthtime,
+            birthplace=excluded.birthplace,
+            name=excluded.name
+    """, (
+        user_id,
+        encrypt_data(str(birthdate)),
+        encrypt_data(birthtime) if birthtime else None,
+        encrypt_data(birthplace) if birthplace else None,
+        encrypt_data(name) if name else None
+    ))
+    conn.commit()
+    conn.close()
+
+def update_user_info(user_id, field, value):
+    """特定のフィールドを更新"""
+    conn = sqlite3.connect("users.db", check_same_thread=False)
+    c = conn.cursor()
+    c.execute(f"""
+        UPDATE users SET {field} = ? WHERE user_id = ?
+    """, (encrypt_data(value) if value else None, user_id))
+    conn.commit()
+    conn.close()
+    
+def get_user_info(user_id):
+    """データベースからユーザー情報を取得し、復号化する"""
+    conn = sqlite3.connect("users.db", check_same_thread=False)
+    c = conn.cursor()
+    c.execute("SELECT birthdate, birthtime, birthplace, name FROM users WHERE user_id=?", (user_id,))
+    result = c.fetchone()
+    conn.close()
+
+    if result:
+        return {
+            "birthdate": decrypt_data(result[0]),
+            "birthtime": decrypt_data(result[1]) if result[1] else "未入力",
+            "birthplace": decrypt_data(result[2]) if result[2] else "未入力",
+            "name": decrypt_data(result[3]) if result[3] else "未入力",
+        }
+    return None
+
 def get_fortune_response(user_info):
     """ユーザー情報を元に占い結果を取得する関数"""
 
@@ -147,7 +196,6 @@ def get_fortune_response(user_info):
     )
 
     return response["choices"][0]["message"]["content"].strip()
-
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)
