@@ -199,9 +199,8 @@ def get_fortune_response(user_info):
     """
 
     try:
-        response = openai.Chat.create(
-            model="gpt-4",  # GPT-4アクセスがある場合
-            # model="gpt-3.5-turbo",  # GPT-3.5を使う場合
+        response = openai.ChatCompletion.create(
+            model="gpt-3.5-turbo",
             messages=[
                 {"role": "system", "content": prompt}
             ]
