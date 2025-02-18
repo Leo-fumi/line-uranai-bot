@@ -117,26 +117,22 @@ def handle_message(event):
     
     line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply))
 
-def save_user_info(user_id, birthdate, birthtime, birthplace, name):
+def get_user_info(user_id):
+    """データベースからユーザー情報を取得し、復号化する"""
     conn = sqlite3.connect("users.db", check_same_thread=False)
     c = conn.cursor()
-    c.execute("""
-        INSERT INTO users (user_id, birthdate, birthtime, birthplace, name)
-        VALUES (?, ?, ?, ?, ?)
-        ON CONFLICT(user_id) DO UPDATE SET
-            birthdate=excluded.birthdate,
-            birthtime=excluded.birthtime,
-            birthplace=excluded.birthplace,
-            name=excluded.name
-    """, (
-        user_id,
-        encrypt_data(str(birthdate)),
-        encrypt_data(birthtime) if birthtime else None,
-        encrypt_data(birthplace) if birthplace else None,
-        encrypt_data(name) if name else None
-    ))
-    conn.commit()
+    c.execute("SELECT birthdate, birthtime, birthplace, name FROM users WHERE user_id=?", (user_id,))
+    result = c.fetchone()
     conn.close()
+
+    if result:
+        return {
+            "birthdate": decrypt_data(result[0]),
+            "birthtime": decrypt_data(result[1]) if result[1] else "未入力",
+            "birthplace": decrypt_data(result[2]) if result[2] else "未入力",
+            "name": decrypt_data(result[3]) if result[3] else "未入力",
+        }
+    return None
 
 def update_user_info(user_id, field, value):
     """データベース内の特定のフィールドを更新"""
