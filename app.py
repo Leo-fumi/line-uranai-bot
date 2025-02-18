@@ -19,14 +19,18 @@ def home():
 
 @app.route("/webhook", methods=["POST"])
 def webhook():
-    signature = request.headers["X-Line-Signature"]
+    signature = request.headers.get("X-Line-Signature")
     body = request.get_data(as_text=True)
 
-    # Webhookの処理を非同期で実行
-    threading.Thread(target=handle_webhook, args=(body, signature)).start()
+    if not signature:
+        return "Missing Signature", 400
 
-    # すぐに200を返す
-    return "OK", 200
+    try:
+        # Webhookの処理を非同期で実行（タイムアウト防止）
+        threading.Thread(target=handle_webhook, args=(body, signature)).start()
+        return "OK", 200
+    except Exception as e:
+        return str(e), 500
 
 def handle_webhook(body, signature):
     try:
@@ -41,4 +45,3 @@ def handle_message(event):
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)
-
