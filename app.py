@@ -117,6 +117,16 @@ def handle_message(event):
     
     line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply))
 
+def update_user_info(user_id, field, value):
+    """データベース内の特定のフィールドを更新"""
+    conn = sqlite3.connect("users.db", check_same_thread=False)
+    c = conn.cursor()
+    c.execute(f"""
+        UPDATE users SET {field} = ? WHERE user_id = ?
+    """, (encrypt_data(value), user_id))
+    conn.commit()
+    conn.close()
+
 def save_user_info(user_id, birthdate, birthtime, birthplace, name):
     """ユーザー情報をデータベースに保存"""
     conn = sqlite3.connect("users.db", check_same_thread=False)
@@ -139,9 +149,11 @@ def save_user_info(user_id, birthdate, birthtime, birthplace, name):
     conn.commit()
     conn.close()
 
-def get_fortune_response(user_info):
-    """ユーザー情報を元に占い結果を取得"""
-    return "占い結果のサンプル: 幸運が訪れます！"
+from flask import send_file
+
+@app.route("/download-db", methods=["GET"])
+def download_db():
+    return send_file("users.db", as_attachment=True)
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)
