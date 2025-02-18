@@ -117,43 +117,37 @@ def handle_message(event):
     
     line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply))
 
-def update_user_info(user_id, field, value):
-    """データベース内の特定のフィールドを更新"""
-    conn = sqlite3.connect("users.db", check_same_thread=False)
-    c = conn.cursor()
-    c.execute(f"""
-        UPDATE users SET {field} = ? WHERE user_id = ?
-    """, (encrypt_data(value), user_id))
-    conn.commit()
-    conn.close()
+def get_fortune_response(user_info):
+    """ユーザー情報を元に占い結果を取得する関数"""
 
-def save_user_info(user_id, birthdate, birthtime, birthplace, name):
-    """ユーザー情報をデータベースに保存"""
-    conn = sqlite3.connect("users.db", check_same_thread=False)
-    c = conn.cursor()
-    c.execute("""
-        INSERT INTO users (user_id, birthdate, birthtime, birthplace, name)
-        VALUES (?, ?, ?, ?, ?)
-        ON CONFLICT(user_id) DO UPDATE SET
-            birthdate=excluded.birthdate,
-            birthtime=excluded.birthtime,
-            birthplace=excluded.birthplace,
-            name=excluded.name
-    """, (
-        user_id,
-        encrypt_data(str(birthdate)),
-        encrypt_data(birthtime) if birthtime else None,
-        encrypt_data(birthplace) if birthplace else None,
-        encrypt_data(name) if name else None
-    ))
-    conn.commit()
-    conn.close()
+    prompt = f"""
+    以下のユーザー情報を基に占いを行ってください。
 
-from flask import send_file
+    生年月日: {user_info['birthdate']}
+    生まれた時間: {user_info['birthtime']}
+    生まれた市区町村: {user_info['birthplace']}
+    氏名: {user_info['name']}
 
-@app.route("/download-db", methods=["GET"])
-def download_db():
-    return send_file("users.db", as_attachment=True)
+    西洋占星術、東洋占星術、数秘術、姓名判断（熊崎式姓名判断）を統合的に用いて占ってください。
+    占いの結果（X）と西洋占星術の結果（A）、東洋占星術の結果（B）、数秘術（C）、姓名判断（D）は、年齢（a）を使って以下の数式に従ってください。
+    
+    X = (100-a)*A + a*B + 10*C + 13*D
+
+    なお、占いの結果にはどの占星術を用いたかは含めないでください。
+    
+    「あなたは今、迷っているようですね。」「あなたにもうすぐ幸運が訪れようとしています」のように読者に語りかけ、
+    まるで目の前で読者を鑑定しているかのような口調で結果を出してください。
+
+    今月の運勢のみを表示してください。
+    """
+
+    response = openai.ChatCompletion.create(
+        model="gpt-4",
+        messages=[{"role": "system", "content": prompt}]
+    )
+
+    return response["choices"][0]["message"]["content"].strip()
+
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)
