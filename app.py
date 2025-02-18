@@ -168,7 +168,7 @@ def get_user_info(user_id):
 
 def get_fortune_response(user_info):
     """ユーザー情報を元に占い結果を取得する関数"""
-
+    client = openai.Client(api_key=OPENAI_API_KEY)
     prompt = f"""
     以下のユーザー情報を基に占いを行ってください。
 
@@ -190,12 +190,12 @@ def get_fortune_response(user_info):
     今月の運勢のみを表示してください。
     """
 
-    response = openai.ChatCompletion.create(
+    response = client.chat.completions.create(
         model="gpt-4",
         messages=[{"role": "system", "content": prompt}]
     )
 
-    return response["choices"][0]["message"]["content"].strip()
+    return response.choices[0].message.content.strip()
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)
