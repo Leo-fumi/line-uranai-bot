@@ -92,7 +92,7 @@ def handle_message(event):
        - 全部そろったら「登録完了」と伝える
 
     2. ユーザー情報が完了している場合：
-       - ユーザーが「今月の運勢」と入力 -> 占い結果を返す
+       - ユーザーが「占い: 〇〇」と入力 -> 〇〇をトピックとして占い結果を返す
        - それ以外 -> ヘルプ的メッセージを返す
     """
     user_id = event.source.user_id
@@ -107,20 +107,27 @@ def handle_message(event):
 
     # すべての項目が登録済みかどうか
     if is_user_info_complete(user_info):
-        # すべて登録済み -> 「今月の運勢」かどうかで分岐
-        if user_message == "今月の運勢":
-            reply = get_fortune_response(user_info)
+        # すべて登録済み -> 占いのトピック指定かどうかで分岐
+        if user_message.startswith("占い:"):
+            topic = user_message.replace("占い:", "").strip()
+            if topic:
+                # ユーザーが指定したトピックに関して占う
+                reply = get_fortune_response(user_info, topic)
+            else:
+                # 「占い:」だけで何も指定がない場合
+                reply = "占いたい内容を指定してください。例：「占い: 仕事運」"
         else:
+            # それ以外のメッセージはガイド
             reply = (
-                "登録済みです。占いをご希望の場合は「今月の運勢」と入力してください。\n"
-                "情報を変更したい場合は、管理者にお問い合わせください。"
+                "占いたい内容を指定してください。\n"
+                "例：「占い: 今月の運勢」「占い: 仕事運」「占い: 恋愛運」"
             )
     else:
         # まだ登録が完了していない場合
         next_field = get_next_missing_field(user_info)
-        # まず「今月の運勢」と言われても、情報が揃っていないなら先に登録案内
-        if user_message == "今月の運勢":
-            reply = f"まだ登録が完了していません。まずは{FIELD_PROMPTS[next_field]}"
+        # ユーザーが「占い:」と打っても情報不足なら先に登録案内
+        if user_message.startswith("占い:"):
+            reply = f"まだ登録が完了していません。まずは {FIELD_PROMPTS[next_field]}"
         else:
             # 現在の「次に入力すべきフィールド」に対してバリデーション＋登録
             field_stored, error_msg = store_user_input(user_id, next_field, user_message)
@@ -133,7 +140,8 @@ def handle_message(event):
                 if is_user_info_complete(user_info):
                     reply = (
                         "すべての登録が完了しました！\n"
-                        "占いをご希望の場合は「今月の運勢」と入力してください。"
+                        "占いたい内容を指定してください。\n"
+                        "例：「占い: 今月の運勢」「占い: 仕事運」「占い: 恋愛運」"
                     )
                 else:
                     # まだ次がある
@@ -192,12 +200,9 @@ def store_user_input(user_id, field, value):
             return (False, "生年月日の形式が正しくありません。YYYY-MM-DD 形式で入力してください。")
     elif field == "birthtime":
         # HH:MM形式か簡易チェック
-        # 厳密にパースしたい場合は datetime.strptime(value, "%H:%M") など
         parts = value.split(":")
         if len(parts) != 2:
             return (False, "生まれた時間の形式が正しくありません。HH:MM 形式で入力してください。")
-        # さらに数値として範囲チェックしたければ追加
-        # 例: 0 <= hour <= 23, 0 <= minute <= 59
         try:
             hour = int(parts[0])
             minute = int(parts[1])
@@ -263,7 +268,8 @@ def get_user_info(user_id):
         }
     return None
 
-def get_fortune_response(user_info):
+def get_fortune_response(user_info, topic):
+    """ユーザー情報とトピックをもとに占いを行う"""
     # OpenAI APIキーを設定
     openai.api_key = OPENAI_API_KEY
     
@@ -276,8 +282,12 @@ def get_fortune_response(user_info):
     生まれた市区町村: {user_info['birthplace']}
     氏名: {user_info['name']}
 
+    ユーザーは以下のテーマについて占ってほしいと希望しています:
+    「{topic}」
+
     西洋占星術、東洋占星術、数秘術、姓名判断（熊崎式姓名判断）を統合的に用いて占ってください。
-    占いの結果（X）と西洋占星術の結果（A）、東洋占星術の結果（B）、数秘術（C）、姓名判断（D）は、年齢（a）を使って以下の数式に従ってください。
+    占いの結果（X）と西洋占星術の結果（A）、東洋占星術の結果（B）、数秘術（C）、姓名判断（D）は、
+    年齢（a）を使って以下の数式に従ってください。
     
     X = (100-a)*A + a*B + 10*C + 13*D
 
@@ -286,7 +296,7 @@ def get_fortune_response(user_info):
     「あなたは今、迷っているようですね。」「あなたにもうすぐ幸運が訪れようとしています」のように読者に語りかけ、
     まるで目の前で読者を鑑定しているかのような口調で結果を出してください。
 
-    今月の運勢のみを表示してください。
+    この占いは「{topic}」に関する内容のみを表示してください。
     """
 
     try:
