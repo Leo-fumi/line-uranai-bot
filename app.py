@@ -138,5 +138,15 @@ def save_user_info(user_id, birthdate, birthtime, birthplace, name):
     conn.commit()
     conn.close()
 
+def update_user_info(user_id, field, value):
+    """データベース内の特定のフィールドを更新"""
+    conn = sqlite3.connect("users.db", check_same_thread=False)
+    c = conn.cursor()
+    c.execute(f"""
+        UPDATE users SET {field} = ? WHERE user_id = ?
+    """, (encrypt_data(value), user_id))
+    conn.commit()
+    conn.close()
+
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)
