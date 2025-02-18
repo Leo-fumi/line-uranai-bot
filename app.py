@@ -86,42 +86,133 @@ def handle_webhook(body, signature):
 
 @handler.add(MessageEvent, message=TextMessage)
 def handle_message(event):
+    """
+    1. ユーザー情報（生年月日/生まれた時間/市区町村/氏名）が未完了の場合：
+       - 次に入力すべき項目を案内し、ユーザーからの入力をそのままDBに保存
+       - 全部そろったら「登録完了」と伝える
+
+    2. ユーザー情報が完了している場合：
+       - ユーザーが「今月の運勢」と入力 -> 占い結果を返す
+       - それ以外 -> ヘルプ的メッセージを返す
+    """
     user_id = event.source.user_id
     user_message = event.message.text.strip()
 
-    if user_message.startswith("生年月日"):
-        birthdate = user_message.replace("生年月日 ", "").strip()
-        try:
-            birthdate_obj = datetime.datetime.strptime(birthdate, "%Y-%m-%d").date()
-            save_user_info(user_id, birthdate_obj, None, None, None)
-            reply = "生まれた時間を入力してください（任意）。例: 14:30"
-        except ValueError:
-            reply = "生年月日の形式が正しくありません。例: 生年月日 1990-05-15"
-    elif user_message.startswith("生まれた時間"):
-        birthtime = user_message.replace("生まれた時間 ", "").strip()
-        update_user_info(user_id, "birthtime", birthtime)
-        reply = "生まれた市区町村を入力してください（任意）。例: 東京都渋谷区"
-    elif user_message.startswith("生まれた市区町村"):
-        birthplace = user_message.replace("生まれた市区町村 ", "").strip()
-        update_user_info(user_id, "birthplace", birthplace)
-        reply = "氏名を入力してください（任意）。例: 山田太郎"
-    elif user_message.startswith("氏名"):
-        name = user_message.replace("氏名 ", "").strip()
-        update_user_info(user_id, "name", name)
-        reply = "情報を登録しました。今月の運勢を知りたい場合は「今月の運勢」と送信してください。"
-    elif user_message == "今月の運勢":
+    user_info = get_user_info(user_id)
+
+    # まだDBにレコード自体がなければ作っておく（全項目"未入力"の状態）
+    if not user_info:
+        initialize_user_info(user_id)
         user_info = get_user_info(user_id)
-        if user_info:
+
+    # すべての項目が登録済みかどうか
+    if is_user_info_complete(user_info):
+        # すべて登録済み -> 「今月の運勢」かどうかで分岐
+        if user_message == "今月の運勢":
             reply = get_fortune_response(user_info)
         else:
-            reply = "まずは生年月日を登録してください。「生年月日 YYYY-MM-DD」と送信してください。"
+            reply = (
+                "登録済みです。占いをご希望の場合は「今月の運勢」と入力してください。\n"
+                "情報を変更したい場合は、管理者にお問い合わせください。"
+            )
     else:
-        reply = "「生年月日 YYYY-MM-DD」と送信してください。"
-    
+        # まだ登録が完了していない場合
+        next_field = get_next_missing_field(user_info)
+        # まず「今月の運勢」と言われても、情報が揃っていないなら先に登録案内
+        if user_message == "今月の運勢":
+            reply = f"まだ登録が完了していません。まずは{FIELD_PROMPTS[next_field]}"
+        else:
+            # 現在の「次に入力すべきフィールド」に対してバリデーション＋登録
+            field_stored, error_msg = store_user_input(user_id, next_field, user_message)
+            if not field_stored:
+                # バリデーション失敗等の場合
+                reply = error_msg
+            else:
+                # 正しく保存できたら、次の項目を確認
+                user_info = get_user_info(user_id)
+                if is_user_info_complete(user_info):
+                    reply = (
+                        "すべての登録が完了しました！\n"
+                        "占いをご希望の場合は「今月の運勢」と入力してください。"
+                    )
+                else:
+                    # まだ次がある
+                    new_next_field = get_next_missing_field(user_info)
+                    reply = FIELD_PROMPTS[new_next_field]
+
     line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply))
 
+def initialize_user_info(user_id):
+    """まだレコードがない場合、'未入力'状態で作成"""
+    with db_lock:
+        conn = sqlite3.connect("users.db", check_same_thread=False)
+        c = conn.cursor()
+        c.execute("""
+            INSERT OR IGNORE INTO users (user_id, birthdate, birthtime, birthplace, name)
+            VALUES (?, ?, ?, ?, ?)
+        """, (user_id, encrypt_data("未入力"), encrypt_data("未入力"), encrypt_data("未入力"), encrypt_data("未入力")))
+        conn.commit()
+        conn.close()
+
+def is_user_info_complete(user_info):
+    """4項目すべてが '未入力' 以外になっていれば完了とみなす"""
+    return all(
+        user_info[field] != "未入力"
+        for field in ["birthdate", "birthtime", "birthplace", "name"]
+    )
+
+FIELDS_ORDER = ["birthdate", "birthtime", "birthplace", "name"]
+FIELD_PROMPTS = {
+    "birthdate": "生年月日を YYYY-MM-DD 形式で入力してください。",
+    "birthtime": "生まれた時間を HH:MM 形式で入力してください。",
+    "birthplace": "生まれた市区町村を入力してください。",
+    "name": "氏名を入力してください。"
+}
+
+def get_next_missing_field(user_info):
+    """まだ '未入力' のフィールドのうち、FIELDS_ORDERで先頭のものを返す"""
+    for field in FIELDS_ORDER:
+        if user_info[field] == "未入力":
+            return field
+    return None  # 全部埋まっていれば None
+
+def store_user_input(user_id, field, value):
+    """
+    ユーザーが入力した文字列を、指定フィールドにバリデーションをかけつつ保存。
+    戻り値:
+      (True, None)  -> 正常に保存完了
+      (False, エラーメッセージ) -> バリデーション失敗など
+    """
+    value = value.strip()
+    if field == "birthdate":
+        # YYYY-MM-DD形式かチェック
+        try:
+            datetime.datetime.strptime(value, "%Y-%m-%d").date()
+        except ValueError:
+            return (False, "生年月日の形式が正しくありません。YYYY-MM-DD 形式で入力してください。")
+    elif field == "birthtime":
+        # HH:MM形式か簡易チェック
+        # 厳密にパースしたい場合は datetime.strptime(value, "%H:%M") など
+        parts = value.split(":")
+        if len(parts) != 2:
+            return (False, "生まれた時間の形式が正しくありません。HH:MM 形式で入力してください。")
+        # さらに数値として範囲チェックしたければ追加
+        # 例: 0 <= hour <= 23, 0 <= minute <= 59
+        try:
+            hour = int(parts[0])
+            minute = int(parts[1])
+            if not (0 <= hour <= 23 and 0 <= minute <= 59):
+                return (False, "時刻が不正です。0〜23時、0〜59分で指定してください。")
+        except ValueError:
+            return (False, "生まれた時間の形式が正しくありません。HH:MM 形式で入力してください。")
+
+    # birthplace, name は特にバリデーションなし
+    # DBに保存
+    update_user_info(user_id, field, value)
+    return (True, None)
+
 def save_user_info(user_id, birthdate, birthtime, birthplace, name):
-    """ユーザー情報をデータベースに保存"""
+    """ユーザー情報をデータベースに保存 (初回または上書き)"""
     with db_lock:
         conn = sqlite3.connect("users.db", check_same_thread=False)
         c = conn.cursor()
@@ -136,9 +227,9 @@ def save_user_info(user_id, birthdate, birthtime, birthplace, name):
         """, (
             user_id,
             encrypt_data(str(birthdate)),
-            encrypt_data(birthtime) if birthtime else None,
-            encrypt_data(birthplace) if birthplace else None,
-            encrypt_data(name) if name else None
+            encrypt_data(birthtime),
+            encrypt_data(birthplace),
+            encrypt_data(name)
         ))
         conn.commit()
         conn.close()
@@ -150,7 +241,7 @@ def update_user_info(user_id, field, value):
         c = conn.cursor()
         c.execute(f"""
             UPDATE users SET {field} = ? WHERE user_id = ?
-        """, (encrypt_data(value) if value else None, user_id))
+        """, (encrypt_data(value), user_id))
         conn.commit()
         conn.close()
     
@@ -166,9 +257,9 @@ def get_user_info(user_id):
     if result:
         return {
             "birthdate": decrypt_data(result[0]),
-            "birthtime": decrypt_data(result[1]) if result[1] else "未入力",
-            "birthplace": decrypt_data(result[2]) if result[2] else "未入力",
-            "name": decrypt_data(result[3]) if result[3] else "未入力",
+            "birthtime": decrypt_data(result[1]),
+            "birthplace": decrypt_data(result[2]),
+            "name": decrypt_data(result[3]),
         }
     return None
 
@@ -200,7 +291,7 @@ def get_fortune_response(user_info):
 
     try:
         response = openai.ChatCompletion.create(
-            model="gpt-3.5-turbo",
+            model="gpt-3.5-turbo",  # GPT-4を使えるなら "gpt-4"
             messages=[
                 {"role": "system", "content": prompt}
             ]
@@ -211,8 +302,6 @@ def get_fortune_response(user_info):
         # ここで例外をログに出しておくと Render のログでも確認できる
         print(f"OpenAI API Error: {e}")
         return "占い結果を取得できませんでした。時間をおいて再度お試しください。"
-
-
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)
