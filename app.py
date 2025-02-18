@@ -40,19 +40,22 @@ def decrypt_data(encrypted_data):
     return cipher.decrypt(encrypted_data.encode()).decode()
 
 # SQLiteデータベースのセットアップ
-conn = sqlite3.connect("users.db", check_same_thread=False)
-c = conn.cursor()
-c.execute("""
-    CREATE TABLE IF NOT EXISTS users (
-        user_id TEXT PRIMARY KEY,
-        birthdate TEXT,
-        birthtime TEXT,
-        birthplace TEXT,
-        name TEXT
-    )
-""")
-conn.commit()
-conn.close()
+db_lock = threading.Lock()  # DB操作の排他制御用ロック
+
+with db_lock:
+    conn = sqlite3.connect("users.db", check_same_thread=False)
+    c = conn.cursor()
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS users (
+            user_id TEXT PRIMARY KEY,
+            birthdate TEXT,
+            birthtime TEXT,
+            birthplace TEXT,
+            name TEXT
+        )
+    """)
+    conn.commit()
+    conn.close()
 
 line_bot_api = LineBotApi(LINE_ACCESS_TOKEN)
 handler = WebhookHandler(LINE_CHANNEL_SECRET)
@@ -119,43 +122,46 @@ def handle_message(event):
 
 def save_user_info(user_id, birthdate, birthtime, birthplace, name):
     """ユーザー情報をデータベースに保存"""
-    conn = sqlite3.connect("users.db", check_same_thread=False)
-    c = conn.cursor()
-    c.execute("""
-        INSERT INTO users (user_id, birthdate, birthtime, birthplace, name)
-        VALUES (?, ?, ?, ?, ?)
-        ON CONFLICT(user_id) DO UPDATE SET
-            birthdate=excluded.birthdate,
-            birthtime=excluded.birthtime,
-            birthplace=excluded.birthplace,
-            name=excluded.name
-    """, (
-        user_id,
-        encrypt_data(str(birthdate)),
-        encrypt_data(birthtime) if birthtime else None,
-        encrypt_data(birthplace) if birthplace else None,
-        encrypt_data(name) if name else None
-    ))
-    conn.commit()
-    conn.close()
+    with db_lock:
+        conn = sqlite3.connect("users.db", check_same_thread=False)
+        c = conn.cursor()
+        c.execute("""
+            INSERT INTO users (user_id, birthdate, birthtime, birthplace, name)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(user_id) DO UPDATE SET
+                birthdate=excluded.birthdate,
+                birthtime=excluded.birthtime,
+                birthplace=excluded.birthplace,
+                name=excluded.name
+        """, (
+            user_id,
+            encrypt_data(str(birthdate)),
+            encrypt_data(birthtime) if birthtime else None,
+            encrypt_data(birthplace) if birthplace else None,
+            encrypt_data(name) if name else None
+        ))
+        conn.commit()
+        conn.close()
 
 def update_user_info(user_id, field, value):
     """特定のフィールドを更新"""
-    conn = sqlite3.connect("users.db", check_same_thread=False)
-    c = conn.cursor()
-    c.execute(f"""
-        UPDATE users SET {field} = ? WHERE user_id = ?
-    """, (encrypt_data(value) if value else None, user_id))
-    conn.commit()
-    conn.close()
+    with db_lock:
+        conn = sqlite3.connect("users.db", check_same_thread=False)
+        c = conn.cursor()
+        c.execute(f"""
+            UPDATE users SET {field} = ? WHERE user_id = ?
+        """, (encrypt_data(value) if value else None, user_id))
+        conn.commit()
+        conn.close()
     
 def get_user_info(user_id):
     """データベースからユーザー情報を取得し、復号化する"""
-    conn = sqlite3.connect("users.db", check_same_thread=False)
-    c = conn.cursor()
-    c.execute("SELECT birthdate, birthtime, birthplace, name FROM users WHERE user_id=?", (user_id,))
-    result = c.fetchone()
-    conn.close()
+    with db_lock:
+        conn = sqlite3.connect("users.db", check_same_thread=False)
+        c = conn.cursor()
+        c.execute("SELECT birthdate, birthtime, birthplace, name FROM users WHERE user_id=?", (user_id,))
+        result = c.fetchone()
+        conn.close()
 
     if result:
         return {
@@ -168,7 +174,7 @@ def get_user_info(user_id):
 
 def get_fortune_response(user_info):
     """ユーザー情報を元に占い結果を取得する関数"""
-    client = openai.Client(api_key=OPENAI_API_KEY)
+    # （※必要に応じて生年月日から年齢を計算し、プロンプトに追加するなどの対応を検討してください）
     prompt = f"""
     以下のユーザー情報を基に占いを行ってください。
 
@@ -190,7 +196,8 @@ def get_fortune_response(user_info):
     今月の運勢のみを表示してください。
     """
 
-    response = client.chat.completions.create(
+    openai.api_key = OPENAI_API_KEY  # APIキーを設定
+    response = openai.ChatCompletion.create(
         model="gpt-4",
         messages=[{"role": "system", "content": prompt}]
     )
