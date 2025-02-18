@@ -198,16 +198,21 @@ def get_fortune_response(user_info):
     今月の運勢のみを表示してください。
     """
 
-    # ChatCompletion ではなく Chat.create() を使用する
-    response = openai.Chat.create(
-        model="gpt-4o",
-        messages=[
-            {"role": "system", "content": prompt}
-        ]
-    )
+    try:
+        response = openai.Chat.create(
+            model="gpt-4",  # GPT-4アクセスがある場合
+            # model="gpt-3.5-turbo",  # GPT-3.5を使う場合
+            messages=[
+                {"role": "system", "content": prompt}
+            ]
+        )
+        return response.choices[0].message.content.strip()
 
-    # 結果テキストを取り出して返す
-    return response.choices[0].message.content.strip()
+    except Exception as e:
+        # ここで例外をログに出しておくと Render のログでも確認できる
+        print(f"OpenAI API Error: {e}")
+        return "占い結果を取得できませんでした。時間をおいて再度お試しください。"
+
 
 
 if __name__ == "__main__":
