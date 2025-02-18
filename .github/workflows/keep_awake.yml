@@ -1,0 +1,13 @@
+name: Keep Render Awake
+
+on:
+  schedule:
+    - cron: '*/15 * * * *'  # 15分ごとに実行（スリープ防止）
+  workflow_dispatch:  # 手動実行も可能にする
+
+jobs:
+  keep_awake:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Send request to Render
+        run: curl -s https://line-uranai-bot.onrender.com/
