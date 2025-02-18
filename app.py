@@ -88,8 +88,8 @@ def handle_webhook(body, signature):
 def handle_message(event):
     """
     1. ユーザー情報（生年月日/生まれた時間/市区町村/氏名）が未完了の場合：
-       - 次に入力すべき項目を案内し、ユーザーからの入力をそのままDBに保存
-       - 全部そろったら「登録完了」と伝える
+       - 次に入力すべき項目を案内し、入力をそのままDBに保存
+       - 全部揃ったら「登録完了」と伝える
 
     2. ユーザー情報が完了している場合：
        - ユーザーが「占い: 〇〇」と入力 -> 〇〇をトピックとして占い結果を返す
@@ -100,42 +100,38 @@ def handle_message(event):
 
     user_info = get_user_info(user_id)
 
-    # まだDBにレコード自体がなければ作っておく（全項目"未入力"の状態）
+    # まだDBにレコードがなければ初期化（すべて "未入力" の状態）
     if not user_info:
         initialize_user_info(user_id)
         user_info = get_user_info(user_id)
 
     # すべての項目が登録済みかどうか
     if is_user_info_complete(user_info):
-        # すべて登録済み -> 占いのトピック指定かどうかで分岐
+        # すべて登録済み → 占いのトピック指定かどうかで分岐
         if user_message.startswith("占い:"):
             topic = user_message.replace("占い:", "").strip()
             if topic:
-                # ユーザーが指定したトピックに関して占う
-                reply = get_fortune_response(user_info, topic)
+                # ユーザーが指定したトピックに対して占いを実施
+                fortune_text = get_fortune_response(user_info, topic)
+                send_long_text(event.reply_token, fortune_text)
+                return  # ここで終了
             else:
-                # 「占い:」だけで何も指定がない場合
                 reply = "占いたい内容を指定してください。例：「占い: 仕事運」"
         else:
-            # それ以外のメッセージはガイド
             reply = (
                 "占いたい内容を指定してください。\n"
                 "例：「占い: 今月の運勢」「占い: 仕事運」「占い: 恋愛運」"
             )
     else:
-        # まだ登録が完了していない場合
+        # 登録が完了していない場合
         next_field = get_next_missing_field(user_info)
-        # ユーザーが「占い:」と打っても情報不足なら先に登録案内
         if user_message.startswith("占い:"):
             reply = f"まだ登録が完了していません。まずは {FIELD_PROMPTS[next_field]}"
         else:
-            # 現在の「次に入力すべきフィールド」に対してバリデーション＋登録
             field_stored, error_msg = store_user_input(user_id, next_field, user_message)
             if not field_stored:
-                # バリデーション失敗等の場合
                 reply = error_msg
             else:
-                # 正しく保存できたら、次の項目を確認
                 user_info = get_user_info(user_id)
                 if is_user_info_complete(user_info):
                     reply = (
@@ -144,14 +140,13 @@ def handle_message(event):
                         "例：「占い: 今月の運勢」「占い: 仕事運」「占い: 恋愛運」"
                     )
                 else:
-                    # まだ次がある
                     new_next_field = get_next_missing_field(user_info)
                     reply = FIELD_PROMPTS[new_next_field]
 
     line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply))
 
 def initialize_user_info(user_id):
-    """まだレコードがない場合、'未入力'状態で作成"""
+    """レコードがない場合、'未入力' 状態で初期化する"""
     with db_lock:
         conn = sqlite3.connect("users.db", check_same_thread=False)
         c = conn.cursor()
@@ -178,28 +173,26 @@ FIELD_PROMPTS = {
 }
 
 def get_next_missing_field(user_info):
-    """まだ '未入力' のフィールドのうち、FIELDS_ORDERで先頭のものを返す"""
+    """まだ '未入力' のフィールドのうち、先頭のものを返す"""
     for field in FIELDS_ORDER:
         if user_info[field] == "未入力":
             return field
-    return None  # 全部埋まっていれば None
+    return None
 
 def store_user_input(user_id, field, value):
     """
-    ユーザーが入力した文字列を、指定フィールドにバリデーションをかけつつ保存。
+    入力された文字列を指定フィールドに保存（バリデーションあり）
     戻り値:
-      (True, None)  -> 正常に保存完了
-      (False, エラーメッセージ) -> バリデーション失敗など
+      (True, None)  → 保存成功
+      (False, エラーメッセージ) → バリデーション失敗
     """
     value = value.strip()
     if field == "birthdate":
-        # YYYY-MM-DD形式かチェック
         try:
             datetime.datetime.strptime(value, "%Y-%m-%d").date()
         except ValueError:
             return (False, "生年月日の形式が正しくありません。YYYY-MM-DD 形式で入力してください。")
     elif field == "birthtime":
-        # HH:MM形式か簡易チェック
         parts = value.split(":")
         if len(parts) != 2:
             return (False, "生まれた時間の形式が正しくありません。HH:MM 形式で入力してください。")
@@ -211,13 +204,11 @@ def store_user_input(user_id, field, value):
         except ValueError:
             return (False, "生まれた時間の形式が正しくありません。HH:MM 形式で入力してください。")
 
-    # birthplace, name は特にバリデーションなし
-    # DBに保存
     update_user_info(user_id, field, value)
     return (True, None)
 
 def save_user_info(user_id, birthdate, birthtime, birthplace, name):
-    """ユーザー情報をデータベースに保存 (初回または上書き)"""
+    """ユーザー情報をDBに保存（初回または更新）"""
     with db_lock:
         conn = sqlite3.connect("users.db", check_same_thread=False)
         c = conn.cursor()
@@ -240,7 +231,7 @@ def save_user_info(user_id, birthdate, birthtime, birthplace, name):
         conn.close()
 
 def update_user_info(user_id, field, value):
-    """特定のフィールドを更新"""
+    """指定フィールドをDBで更新する"""
     with db_lock:
         conn = sqlite3.connect("users.db", check_same_thread=False)
         c = conn.cursor()
@@ -251,7 +242,7 @@ def update_user_info(user_id, field, value):
         conn.close()
     
 def get_user_info(user_id):
-    """データベースからユーザー情報を取得し、復号化する"""
+    """DBからユーザー情報を取得し復号化する"""
     with db_lock:
         conn = sqlite3.connect("users.db", check_same_thread=False)
         c = conn.cursor()
@@ -268,40 +259,37 @@ def get_user_info(user_id):
         }
     return None
 
+def split_message(text, max_length=2000):
+    """テキストを max_length ごとに分割してリストとして返す"""
+    return [text[i:i+max_length] for i in range(0, len(text), max_length)]
+
+def send_long_text(reply_token, text):
+    """長文を複数の TextSendMessage として送信する"""
+    messages = [TextSendMessage(text=chunk) for chunk in split_message(text)]
+    line_bot_api.reply_message(reply_token, messages)
+
 def get_fortune_response(user_info, topic):
-    """ユーザー情報とトピックをもとに占いを行う"""
-    # OpenAI APIキーを設定
+    """ユーザー情報とトピックをもとに、詳細な占い結果を生成する"""
     openai.api_key = OPENAI_API_KEY
-    
-    # プロンプトの組み立て
+
+    # プロンプトを充実させ、複数段落に渡る詳細な占い結果を生成するよう指示
     prompt = f"""
-    以下のユーザー情報を基に占いを行ってください。
+    以下のユーザー情報を基に、占星術、東洋占星術、数秘術、姓名判断（熊崎式）を統合的に活用して、非常に詳細かつ充実した占い結果を出力してください。
 
     生年月日: {user_info['birthdate']}
     生まれた時間: {user_info['birthtime']}
     生まれた市区町村: {user_info['birthplace']}
     氏名: {user_info['name']}
 
-    ユーザーは以下のテーマについて占ってほしいと希望しています:
-    「{topic}」
-
-    西洋占星術、東洋占星術、数秘術、姓名判断（熊崎式姓名判断）を統合的に用いて占ってください。
-    占いの結果（X）と西洋占星術の結果（A）、東洋占星術の結果（B）、数秘術（C）、姓名判断（D）は、
-    年齢（a）を使って以下の数式に従ってください。
-    
-    X = (100-a)*A + a*B + 10*C + 13*D
-
-    なお、占いの結果にはどの占星術を用いたかは含めないでください。
-    
-    「あなたは今、迷っているようですね。」「あなたにもうすぐ幸運が訪れようとしています」のように読者に語りかけ、
-    まるで目の前で読者を鑑定しているかのような口調で結果を出してください。
-
-    この占いは「{topic}」に関する内容のみを表示してください。
+    ユーザーは「{topic}」についての占いを希望しています。
+    できるだけ豊かな表現と具体的なアドバイス、未来に向けた励ましのメッセージを含めた、複数の段落に渡る長文の占い結果を生成してください。
+    また、各占術の結果が自然に融合し、全体として読み応えのある内容になるようにしてください。
+    最後に、読者が今後の行動に役立てられるような、具体的なヒントも記載してください。
     """
 
     try:
         response = openai.ChatCompletion.create(
-            model="gpt-3.5-turbo",  # GPT-4を使えるなら "gpt-4"
+            model="gpt-3.5-turbo",  # GPT-4利用可能なら "gpt-4" に変更してください
             messages=[
                 {"role": "system", "content": prompt}
             ]
@@ -309,7 +297,6 @@ def get_fortune_response(user_info, topic):
         return response.choices[0].message.content.strip()
 
     except Exception as e:
-        # ここで例外をログに出しておくと Render のログでも確認できる
         print(f"OpenAI API Error: {e}")
         return "占い結果を取得できませんでした。時間をおいて再度お試しください。"
 
