@@ -1,5 +1,5 @@
 import datetime
-import openai
+from openai import OpenAI
 import os
 import sqlite3
 from flask import Flask, request
@@ -270,7 +270,8 @@ def send_long_text(reply_token, text):
 
 def get_fortune_response(user_info, topic):
     """ユーザー情報とトピックをもとに、詳細な占い結果を生成する"""
-    openai.api_key = OPENAI_API_KEY
+    #openai.api_key = OPENAI_API_KEY
+    client = OpenAI(api_key=OPENAI_API_KEY)
 
     # プロンプトを充実させ、複数段落に渡る詳細な占い結果を生成するよう指示
     prompt = f"""
@@ -291,10 +292,11 @@ def get_fortune_response(user_info, topic):
     """
 
     try:
-        response = openai.ChatCompletion.create(
-            model="gpt-3.5-turbo",  # GPT-4利用可能なら "gpt-4" に変更してください
+        response = client.chat.completions.create(
+            model="gpt-4o",  # GPT-4利用可能なら "gpt-4" に変更してください
             messages=[
-                {"role": "system", "content": prompt}
+                {"role": "system", "content": "あなたは占いの専門家で、あらゆる占いに精通しています。運勢を占ってください"}
+                {"role": "user", "content": prompt}
             ]
         )
         return response.choices[0].message.content.strip()
