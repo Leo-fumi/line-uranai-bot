@@ -1,6 +1,7 @@
 flask
 line-bot-sdk
 cryptography
-openai==0.27.2
+# openai==0.27.2
+OpenAI
 gunicorn
 
