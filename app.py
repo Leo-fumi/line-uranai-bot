@@ -295,7 +295,7 @@ def get_fortune_response(user_info, topic):
         response = client.chat.completions.create(
             model="gpt-4o",  # GPT-4利用可能なら "gpt-4" に変更してください
             messages=[
-                {"role": "system", "content": "あなたは占いの専門家で、あらゆる占いに精通しています。運勢を占ってください"}
+                {"role": "system", "content": "あなたは占いの専門家で、あらゆる占いに精通しています。運勢を占ってください"},
                 {"role": "user", "content": prompt}
             ]
         )
