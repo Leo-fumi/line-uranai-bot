@@ -330,12 +330,12 @@ def get_fortune_response(user_info, topic):
             messages=[
                 {"role": "system", "content": "あなたは占いの専門家で、あらゆる占いに精通しています。運勢を占ってください"},
                 {"role": "user", "content": prompt},
-                temperature=0.3,         # 応答内容の一貫性・安定性向上
-                top_p=0.9,
-                max_tokens=1500,
-                frequency_penalty=0.2,
-                presence_penalty=0.1
             ]
+            temperature=0.3,         # 応答内容の一貫性・安定性向上
+            top_p=0.9,
+            max_tokens=1500,
+            frequency_penalty=0.2,
+            presence_penalty=0.1
         )
         return response.choices[0].message.content.strip()
 
