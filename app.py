@@ -2,7 +2,7 @@ import datetime
 from openai import OpenAI
 import os
 import sqlite3
-from flask import Flask, request
+from flask import Flask, request, render_template
 from linebot import LineBotApi, WebhookHandler
 from linebot.models import MessageEvent, TextMessage, TextSendMessage
 import threading
@@ -83,6 +83,11 @@ def handle_webhook(body, signature):
         handler.handle(body, signature)
     except Exception as e:
         print(f"Error: {e}")
+
+@app.route("/miniapp", methods=["GET"])
+def miniapp_form():
+    """LINEミニアプリのフォームを表示"""
+    return render_template("miniapp_form.html")
 
 @handler.add(MessageEvent, message=TextMessage)
 def handle_message(event):
