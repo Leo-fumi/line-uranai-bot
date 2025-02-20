@@ -7,14 +7,14 @@ import threading
 import requests
 import secrets
 import logging
-from flask import Flask, request, render_template, jsonify, redirect, session, url_for
+from flask import Flask, request, render_template, jsonify
 from openai import OpenAI
 from linebot import LineBotApi, WebhookHandler
 from linebot.models import MessageEvent, TextMessage, TextSendMessage
 from cryptography.fernet import Fernet
 
 app = Flask(__name__)
-# セッション管理用 secret_key を環境変数またはランダム生成
+# セッション管理用 secret_key は不要になりましたが、Flaskの一時セッションで何か使う場合に備えて残しています
 app.secret_key = os.getenv("FLASK_SECRET_KEY", secrets.token_hex(16))
 
 # ログ設定
@@ -25,9 +25,8 @@ LINE_ACCESS_TOKEN = os.getenv("LINE_ACCESS_TOKEN")
 LINE_CHANNEL_SECRET = os.getenv("LINE_CHANNEL_SECRET")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 ENCRYPTION_KEY = os.getenv("ENCRYPTION_KEY")
-LINE_LOGIN_CHANNEL_ID = os.getenv("LINE_LOGIN_CHANNEL_ID")
-LINE_LOGIN_CHANNEL_SECRET = os.getenv("LINE_LOGIN_CHANNEL_SECRET")
-LINE_LOGIN_REDIRECT_URI = os.getenv("LINE_LOGIN_REDIRECT_URI", "https://yourdomain.com/callback")
+# LIFF用のID（LINE Developersコンソールで作成したLIFFアプリのLIFF ID）
+LINE_LIFF_ID = os.getenv("LINE_LIFF_ID", "<YOUR_LIFF_ID>")
 
 if not ENCRYPTION_KEY:
     raise ValueError("暗号化キー（ENCRYPTION_KEY）が設定されていません！")
@@ -72,7 +71,7 @@ handler = WebhookHandler(LINE_CHANNEL_SECRET)
 
 @app.route("/", methods=["GET"])
 def home():
-    return "LINE占いBotは稼働中！"
+    return "LINE占いBotは稼働中！（LIFF版）"
 
 @app.route("/webhook", methods=["POST"])
 def webhook():
@@ -95,83 +94,16 @@ def handle_webhook(body, signature):
     except Exception as e:
         logging.exception("Error in handler.handle")
 
-# LINE Login用エンドポイント（CSRF対策として state を生成）
-@app.route("/login")
-def login():
-    state = secrets.token_urlsafe(16)
-    session['oauth_state'] = state
-    scope = "openid profile"
-    line_auth_url = (
-        "https://access.line.me/oauth2/v2.1/authorize"
-        f"?response_type=code&client_id={LINE_LOGIN_CHANNEL_ID}"
-        f"&redirect_uri={LINE_LOGIN_REDIRECT_URI}&state={state}&scope={scope}"
-    )
-    return redirect(line_auth_url)
-
-# コールバックエンドポイント：state の検証と例外処理の追加
-@app.route("/callback")
-def callback():
-    code = request.args.get("code")
-    state = request.args.get("state")
-    stored_state = session.get("oauth_state")
-    if not code or not state or state != stored_state:
-        logging.error("Invalid state or missing code")
-        return "認証に失敗しました", 400
-
-    # セッションから state を削除して再利用防止
-    session.pop("oauth_state", None)
-
-    try:
-        token_url = "https://api.line.me/oauth2/v2.1/token"
-        headers = { "Content-Type": "application/x-www-form-urlencoded" }
-        data = {
-            "grant_type": "authorization_code",
-            "code": code,
-            "redirect_uri": LINE_LOGIN_REDIRECT_URI,
-            "client_id": LINE_LOGIN_CHANNEL_ID,
-            "client_secret": LINE_LOGIN_CHANNEL_SECRET
-        }
-        token_response = requests.post(token_url, headers=headers, data=data, timeout=10)
-        token_response.raise_for_status()
-        token_json = token_response.json()
-        access_token = token_json.get("access_token")
-        if not access_token:
-            logging.error("Access token not found in response")
-            return "認証に失敗しました", 400
-    except Exception as e:
-        logging.exception("Error during token retrieval")
-        return "認証中にエラーが発生しました", 500
-
-    try:
-        profile_url = "https://api.line.me/v2/profile"
-        profile_headers = { "Authorization": f"Bearer {access_token}" }
-        profile_response = requests.get(profile_url, headers=profile_headers, timeout=10)
-        profile_response.raise_for_status()
-        profile_json = profile_response.json()
-        user_id = profile_json.get("userId")
-        if not user_id:
-            logging.error("User ID not found in profile response")
-            return "ユーザー情報の取得に失敗しました", 400
-    except Exception as e:
-        logging.exception("Error during profile retrieval")
-        return "ユーザー情報の取得中にエラーが発生しました", 500
-
-    session["user_id"] = user_id
-    return redirect(url_for("miniapp_form"))
-
-# ミニアプリのフォーム：セッションからユーザーIDを取得
-@app.route("/miniapp", methods=["GET"])
-def miniapp_form():
-    if "user_id" not in session:
-        return redirect(url_for("login"))
-    return render_template("miniapp_form.html", user_id=session["user_id"])
-
 @handler.add(MessageEvent, message=TextMessage)
 def handle_message(event):
     user_id = event.source.user_id
     user_message = event.message.text.strip()
+
     if user_message == "登録":
-        reply = "こちらのリンクからユーザー情報を登録してください。\nhttps://line-uranai-bot.onrender.com/miniapp"
+        # ユーザーにLIFFページのURLを案内
+        # 例：デプロイ先のURL + /liff_form にアクセスしてもらう
+        reply = "こちらのリンクからユーザー情報を登録してください。\n" \
+                "https://<YOUR_DOMAIN>/liff_form"
     elif user_message == "今月の運勢":
         user_info = get_user_info(user_id)
         if user_info:
@@ -180,23 +112,14 @@ def handle_message(event):
             reply = "まずは「登録」と送信し、情報を登録してください。"
     else:
         reply = "「登録」と送信すると、ユーザー情報の登録ページが開きます。"
+
     try:
         line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply))
     except Exception as e:
         logging.exception("Error sending reply message")
 
-def update_user_info(user_id, field, value):
-    try:
-        with db_lock:
-            conn = sqlite3.connect("users.db", check_same_thread=False)
-            c = conn.cursor()
-            c.execute(f"UPDATE users SET {field} = ? WHERE user_id = ?", (encrypt_data(value), user_id))
-            conn.commit()
-            conn.close()
-    except Exception as e:
-        logging.exception("DB update error")
-
 def get_user_info(user_id):
+    """ユーザー情報をDBから取得し、復号化して返す"""
     try:
         with db_lock:
             conn = sqlite3.connect("users.db", check_same_thread=False)
@@ -217,15 +140,26 @@ def get_user_info(user_id):
 
 @app.route("/save_user_info", methods=["POST"])
 def save_user_info():
+    """
+    フロント（LIFF）から送られてきたユーザー情報をDBに保存する
+    JSON形式で以下を受け取る想定:
+      {
+        "user_id": "...",
+        "birthdate": "...",
+        "birthtime": "...",
+        "birthplace": "...",
+        "name": "..."
+      }
+    """
     data = request.json
-    user_id = session.get("user_id")
-    if not user_id:
-        return jsonify({"status": "error", "message": "ユーザー認証が行われていません"}), 400
-
+    user_id = data.get("user_id")
     birthdate = data.get("birthdate")
     birthtime = data.get("birthtime")
     birthplace = data.get("birthplace")
     name = data.get("name")
+
+    if not user_id:
+        return jsonify({"status": "error", "message": "user_idが含まれていません"}), 400
     if not (birthdate and birthtime and birthplace and name):
         return jsonify({"status": "error", "message": "全てのフィールドの入力が必要です"}), 400
 
@@ -249,6 +183,15 @@ def save_user_info():
 
     return jsonify({"status": "success", "message": "ユーザー情報を保存しました"})
 
+@app.route("/liff_form")
+def liff_form():
+    """
+    ユーザーがアクセスするLIFFページ。
+    liff_form.html をレンダリングして返す。
+    ここで LIFF ID をテンプレートに渡して JavaScript から利用する。
+    """
+    return render_template("liff_form.html", liff_id=LINE_LIFF_ID)
+
 def split_message(text, max_length=2000):
     """テキストを max_length ごとに分割してリストとして返す"""
     return [text[i:i+max_length] for i in range(0, len(text), max_length)]
@@ -260,10 +203,8 @@ def send_long_text(reply_token, text):
 
 def get_fortune_response(user_info, topic):
     """ユーザー情報とトピックをもとに、詳細な占い結果を生成する"""
-    #openai.api_key = OPENAI_API_KEY
     client = OpenAI(api_key=OPENAI_API_KEY)
 
-    # プロンプトを充実させ、複数段落に渡る詳細な占い結果を生成するよう指示
     prompt = f"""
         【役割定義】
         あなたは占いの専門家です。利用者の生年月日、出生時間、市区町村、氏名という個人情報をもとに、
@@ -317,21 +258,20 @@ def get_fortune_response(user_info, topic):
 
     try:
         response = client.chat.completions.create(
-            model="gpt-4o",  # GPT-4利用可能なら "gpt-4" に変更してください
+            model="gpt-4o",  # GPT-4利用可能なら "gpt-4" に変更
             messages=[
                 {"role": "system", "content": "あなたは占いの専門家で、あらゆる占いに精通しています。運勢を占ってください"},
                 {"role": "user", "content": prompt},
             ],
-            temperature=0.3,         # 応答内容の一貫性・安定性向上
+            temperature=0.3,
             top_p=0.9,
             max_tokens=1500,
             frequency_penalty=0.2,
             presence_penalty=0.1
         )
         return response.choices[0].message.content.strip()
-
     except Exception as e:
-        print(f"OpenAI API Error: {e}")
+        logging.exception("OpenAI API Error")
         return "占い結果を取得できませんでした。時間をおいて再度お試しください。"
 
 if __name__ == "__main__":
