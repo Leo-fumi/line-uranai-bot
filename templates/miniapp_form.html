@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ユーザー情報入力</title>
+    <script>
+        function sendData() {
+            const birthdate = document.getElementById("birthdate").value;
+            const birthtime = document.getElementById("birthtime").value;
+            const birthplace = document.getElementById("birthplace").value;
+            const name = document.getElementById("name").value;
+
+            fetch("/save_user_info", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ birthdate, birthtime, birthplace, name })
+            }).then(response => response.json())
+              .then(data => alert("登録が完了しました！"))
+              .catch(error => console.error("Error:", error));
+        }
+    </script>
+</head>
+<body>
+    <h2>ユーザー情報入力</h2>
+    <label>生年月日:</label>
+    <input type="date" id="birthdate"><br>
+
+    <label>生まれた時間:</label>
+    <input type="time" id="birthtime"><br>
+
+    <label>生まれた市区町村:</label>
+    <input type="text" id="birthplace"><br>
+
+    <label>氏名:</label>
+    <input type="text" id="name"><br>
+
+    <button onclick="sendData()">送信</button>
+</body>
+</html>
