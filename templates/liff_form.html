@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <title>ユーザー情報登録(LIFF)</title>
+  <!-- LIFF SDK -->
+  <script src="https://static.line-scdn.net/liff/edge/2.1/sdk.js"></script>
+</head>
+<body>
+<h1>ユーザー情報登録</h1>
+
+<!-- 入力フォーム -->
+<p>
+  <label>生年月日:</label>
+  <input type="date" id="birthdate">
+</p>
+<p>
+  <label>生まれた時間:</label>
+  <input type="time" id="birthtime">
+</p>
+<p>
+  <label>生まれた市区町村:</label>
+  <input type="text" id="birthplace" placeholder="例: 東京都新宿区">
+</p>
+<p>
+  <label>氏名:</label>
+  <input type="text" id="name" placeholder="山田 太郎">
+</p>
+<button onclick="sendData()">登録</button>
+
+<script>
+  // サーバーから渡された LIFF ID
+  const liffId = "{{ liff_id }}";
+
+  async function main() {
+    // LIFF初期化
+    await liff.init({ 2006941872-aNYDpZOY });
+    // 未ログインならログインさせる
+    if (!liff.isLoggedIn()) {
+      liff.login();
+      return;
+    }
+  }
+
+  main().catch(console.error);
+
+  async function sendData() {
+    try {
+      // ユーザープロフィール取得
+      const profile = await liff.getProfile();
+      const userId = profile.userId; // これをサーバーに送る
+
+      // フォームから取得
+      const birthdate = document.getElementById("birthdate").value;
+      const birthtime = document.getElementById("birthtime").value;
+      const birthplace = document.getElementById("birthplace").value;
+      const name = document.getElementById("name").value;
+
+      // バリデーション（簡易）
+      if (!birthdate || !birthtime || !birthplace || !name) {
+        alert("全てのフィールドを入力してください。");
+        return;
+      }
+
+      // サーバーへ送信
+      const response = await fetch("/save_user_info", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          user_id: userId,
+          birthdate,
+          birthtime,
+          birthplace,
+          name
+        })
+      });
+
+      const result = await response.json();
+      if (result.status === "success") {
+        alert("登録が完了しました！");
+      } else {
+        alert("エラー: " + result.message);
+      }
+    } catch (err) {
+      console.error("Error:", err);
+      alert("送信中にエラーが発生しました。");
+    }
+  }
+</script>
+</body>
+</html>
