@@ -1,22 +1,33 @@
-import datetime
-from openai import OpenAI
 import os
 import sqlite3
-from flask import Flask, request, render_template, jsonify
-from linebot import LineBotApi, WebhookHandler
-from linebot.models import MessageEvent, TextMessage, TextSendMessage
-import threading
-from cryptography.fernet import Fernet
 import base64
 import hashlib
+import datetime
+import threading
+import requests
+import secrets
+import logging
+from flask import Flask, request, render_template, jsonify, redirect, session, url_for
+from openai import OpenAI
+from linebot import LineBotApi, WebhookHandler
+from linebot.models import MessageEvent, TextMessage, TextSendMessage
+from cryptography.fernet import Fernet
 
 app = Flask(__name__)
+# セッション管理用 secret_key を環境変数またはランダム生成
+app.secret_key = os.getenv("FLASK_SECRET_KEY", secrets.token_hex(16))
 
-# 環境変数からAPIキーを取得
+# ログ設定
+logging.basicConfig(level=logging.INFO)
+
+# 環境変数から各種キーを取得
 LINE_ACCESS_TOKEN = os.getenv("LINE_ACCESS_TOKEN")
 LINE_CHANNEL_SECRET = os.getenv("LINE_CHANNEL_SECRET")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 ENCRYPTION_KEY = os.getenv("ENCRYPTION_KEY")
+LINE_LOGIN_CHANNEL_ID = os.getenv("LINE_LOGIN_CHANNEL_ID")
+LINE_LOGIN_CHANNEL_SECRET = os.getenv("LINE_LOGIN_CHANNEL_SECRET")
+LINE_LOGIN_REDIRECT_URI = os.getenv("LINE_LOGIN_REDIRECT_URI", "https://yourdomain.com/callback")
 
 if not ENCRYPTION_KEY:
     raise ValueError("暗号化キー（ENCRYPTION_KEY）が設定されていません！")
@@ -39,9 +50,8 @@ def decrypt_data(encrypted_data):
         return None
     return cipher.decrypt(encrypted_data.encode()).decode()
 
-# SQLiteデータベースのセットアップ
-db_lock = threading.Lock()  # DB操作の排他制御用ロック
-
+# SQLiteデータベースのセットアップ（排他制御付き）
+db_lock = threading.Lock()
 with db_lock:
     conn = sqlite3.connect("users.db", check_same_thread=False)
     c = conn.cursor()
@@ -68,156 +78,176 @@ def home():
 def webhook():
     signature = request.headers.get("X-Line-Signature")
     body = request.get_data(as_text=True)
-
     if not signature:
+        logging.error("Missing X-Line-Signature")
         return "Missing Signature", 400
 
     try:
         threading.Thread(target=handle_webhook, args=(body, signature)).start()
         return "OK", 200
     except Exception as e:
+        logging.exception("Webhook handling error")
         return str(e), 500
 
 def handle_webhook(body, signature):
     try:
         handler.handle(body, signature)
     except Exception as e:
-        print(f"Error: {e}")
+        logging.exception("Error in handler.handle")
 
+# LINE Login用エンドポイント（CSRF対策として state を生成）
+@app.route("/login")
+def login():
+    state = secrets.token_urlsafe(16)
+    session['oauth_state'] = state
+    scope = "openid profile"
+    line_auth_url = (
+        "https://access.line.me/oauth2/v2.1/authorize"
+        f"?response_type=code&client_id={LINE_LOGIN_CHANNEL_ID}"
+        f"&redirect_uri={LINE_LOGIN_REDIRECT_URI}&state={state}&scope={scope}"
+    )
+    return redirect(line_auth_url)
+
+# コールバックエンドポイント：state の検証と例外処理の追加
+@app.route("/callback")
+def callback():
+    code = request.args.get("code")
+    state = request.args.get("state")
+    stored_state = session.get("oauth_state")
+    if not code or not state or state != stored_state:
+        logging.error("Invalid state or missing code")
+        return "認証に失敗しました", 400
+
+    # セッションから state を削除して再利用防止
+    session.pop("oauth_state", None)
+
+    try:
+        token_url = "https://api.line.me/oauth2/v2.1/token"
+        headers = { "Content-Type": "application/x-www-form-urlencoded" }
+        data = {
+            "grant_type": "authorization_code",
+            "code": code,
+            "redirect_uri": LINE_LOGIN_REDIRECT_URI,
+            "client_id": LINE_LOGIN_CHANNEL_ID,
+            "client_secret": LINE_LOGIN_CHANNEL_SECRET
+        }
+        token_response = requests.post(token_url, headers=headers, data=data, timeout=10)
+        token_response.raise_for_status()
+        token_json = token_response.json()
+        access_token = token_json.get("access_token")
+        if not access_token:
+            logging.error("Access token not found in response")
+            return "認証に失敗しました", 400
+    except Exception as e:
+        logging.exception("Error during token retrieval")
+        return "認証中にエラーが発生しました", 500
+
+    try:
+        profile_url = "https://api.line.me/v2/profile"
+        profile_headers = { "Authorization": f"Bearer {access_token}" }
+        profile_response = requests.get(profile_url, headers=profile_headers, timeout=10)
+        profile_response.raise_for_status()
+        profile_json = profile_response.json()
+        user_id = profile_json.get("userId")
+        if not user_id:
+            logging.error("User ID not found in profile response")
+            return "ユーザー情報の取得に失敗しました", 400
+    except Exception as e:
+        logging.exception("Error during profile retrieval")
+        return "ユーザー情報の取得中にエラーが発生しました", 500
+
+    session["user_id"] = user_id
+    return redirect(url_for("miniapp_form"))
+
+# ミニアプリのフォーム：セッションからユーザーIDを取得
 @app.route("/miniapp", methods=["GET"])
 def miniapp_form():
-    """LINEミニアプリのフォームを表示"""
-    return render_template("miniapp_form.html")
+    if "user_id" not in session:
+        return redirect(url_for("login"))
+    return render_template("miniapp_form.html", user_id=session["user_id"])
 
 @handler.add(MessageEvent, message=TextMessage)
 def handle_message(event):
     user_id = event.source.user_id
     user_message = event.message.text.strip()
-
     if user_message == "登録":
         reply = "こちらのリンクからユーザー情報を登録してください。\nhttps://line-uranai-bot.onrender.com/miniapp"
     elif user_message == "今月の運勢":
         user_info = get_user_info(user_id)
         if user_info:
-            reply = get_fortune_response(user_info)
+            reply = get_fortune_response(user_info, topic="今月の運勢")
         else:
             reply = "まずは「登録」と送信し、情報を登録してください。"
     else:
         reply = "「登録」と送信すると、ユーザー情報の登録ページが開きます。"
+    try:
+        line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply))
+    except Exception as e:
+        logging.exception("Error sending reply message")
 
-    line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply))
+def update_user_info(user_id, field, value):
+    try:
+        with db_lock:
+            conn = sqlite3.connect("users.db", check_same_thread=False)
+            c = conn.cursor()
+            c.execute(f"UPDATE users SET {field} = ? WHERE user_id = ?", (encrypt_data(value), user_id))
+            conn.commit()
+            conn.close()
+    except Exception as e:
+        logging.exception("DB update error")
 
-def initialize_user_info(user_id):
-    """レコードがない場合、'未入力' 状態で初期化する"""
-    with db_lock:
-        conn = sqlite3.connect("users.db", check_same_thread=False)
-        c = conn.cursor()
-        c.execute("""
-            INSERT OR IGNORE INTO users (user_id, birthdate, birthtime, birthplace, name)
-            VALUES (?, ?, ?, ?, ?)
-        """, (user_id, encrypt_data("未入力"), encrypt_data("未入力"), encrypt_data("未入力"), encrypt_data("未入力")))
-        conn.commit()
-        conn.close()
-
-def is_user_info_complete(user_info):
-    """4項目すべてが '未入力' 以外になっていれば完了とみなす"""
-    return all(
-        user_info[field] != "未入力"
-        for field in ["birthdate", "birthtime", "birthplace", "name"]
-    )
-
-FIELDS_ORDER = ["birthdate", "birthtime", "birthplace", "name"]
-FIELD_PROMPTS = {
-    "birthdate": "生年月日を YYYY-MM-DD 形式で入力してください。",
-    "birthtime": "生まれた時間を HH:MM 形式で入力してください。",
-    "birthplace": "生まれた市区町村を入力してください。",
-    "name": "氏名を入力してください。"
-}
-
-def get_next_missing_field(user_info):
-    """まだ '未入力' のフィールドのうち、先頭のものを返す"""
-    for field in FIELDS_ORDER:
-        if user_info[field] == "未入力":
-            return field
+def get_user_info(user_id):
+    try:
+        with db_lock:
+            conn = sqlite3.connect("users.db", check_same_thread=False)
+            c = conn.cursor()
+            c.execute("SELECT birthdate, birthtime, birthplace, name FROM users WHERE user_id=?", (user_id,))
+            result = c.fetchone()
+            conn.close()
+        if result:
+            return {
+                "birthdate": decrypt_data(result[0]),
+                "birthtime": decrypt_data(result[1]),
+                "birthplace": decrypt_data(result[2]),
+                "name": decrypt_data(result[3]),
+            }
+    except Exception as e:
+        logging.exception("Error fetching user info")
     return None
-
-def store_user_input(user_id, field, value):
-    """
-    入力された文字列を指定フィールドに保存（バリデーションあり）
-    戻り値:
-      (True, None)  → 保存成功
-      (False, エラーメッセージ) → バリデーション失敗
-    """
-    value = value.strip()
-    if field == "birthdate":
-        try:
-            datetime.datetime.strptime(value, "%Y-%m-%d").date()
-        except ValueError:
-            return (False, "生年月日の形式が正しくありません。YYYY-MM-DD 形式で入力してください。")
-    elif field == "birthtime":
-        parts = value.split(":")
-        if len(parts) != 2:
-            return (False, "生まれた時間の形式が正しくありません。HH:MM 形式で入力してください。")
-        try:
-            hour = int(parts[0])
-            minute = int(parts[1])
-            if not (0 <= hour <= 23 and 0 <= minute <= 59):
-                return (False, "時刻が不正です。0〜23時、0〜59分で指定してください。")
-        except ValueError:
-            return (False, "生まれた時間の形式が正しくありません。HH:MM 形式で入力してください。")
-
-    update_user_info(user_id, field, value)
-    return (True, None)
 
 @app.route("/save_user_info", methods=["POST"])
 def save_user_info():
-    """ミニアプリから送られたデータを保存"""
     data = request.json
+    user_id = session.get("user_id")
+    if not user_id:
+        return jsonify({"status": "error", "message": "ユーザー認証が行われていません"}), 400
+
     birthdate = data.get("birthdate")
     birthtime = data.get("birthtime")
     birthplace = data.get("birthplace")
     name = data.get("name")
+    if not (birthdate and birthtime and birthplace and name):
+        return jsonify({"status": "error", "message": "全てのフィールドの入力が必要です"}), 400
 
-    # データベースに保存
-    conn = sqlite3.connect("users.db", check_same_thread=False)
-    c = conn.cursor()
-    c.execute("""
-        INSERT INTO users (birthdate, birthtime, birthplace, name)
-        VALUES (?, ?, ?, ?)
-    """, (birthdate, birthtime, birthplace, name))
-    conn.commit()
-    conn.close()
+    try:
+        birthdate_enc = encrypt_data(birthdate)
+        birthtime_enc = encrypt_data(birthtime)
+        birthplace_enc = encrypt_data(birthplace)
+        name_enc = encrypt_data(name)
+        with db_lock:
+            conn = sqlite3.connect("users.db", check_same_thread=False)
+            c = conn.cursor()
+            c.execute("""
+                INSERT OR REPLACE INTO users (user_id, birthdate, birthtime, birthplace, name)
+                VALUES (?, ?, ?, ?, ?)
+            """, (user_id, birthdate_enc, birthtime_enc, birthplace_enc, name_enc))
+            conn.commit()
+            conn.close()
+    except Exception as e:
+        logging.exception("Error saving user info")
+        return jsonify({"status": "error", "message": "ユーザー情報の保存中にエラーが発生しました"}), 500
 
     return jsonify({"status": "success", "message": "ユーザー情報を保存しました"})
-
-def update_user_info(user_id, field, value):
-    """指定フィールドをDBで更新する"""
-    with db_lock:
-        conn = sqlite3.connect("users.db", check_same_thread=False)
-        c = conn.cursor()
-        c.execute(f"""
-            UPDATE users SET {field} = ? WHERE user_id = ?
-        """, (encrypt_data(value), user_id))
-        conn.commit()
-        conn.close()
-    
-def get_user_info(user_id):
-    """DBからユーザー情報を取得し復号化する"""
-    with db_lock:
-        conn = sqlite3.connect("users.db", check_same_thread=False)
-        c = conn.cursor()
-        c.execute("SELECT birthdate, birthtime, birthplace, name FROM users WHERE user_id=?", (user_id,))
-        result = c.fetchone()
-        conn.close()
-
-    if result:
-        return {
-            "birthdate": decrypt_data(result[0]),
-            "birthtime": decrypt_data(result[1]),
-            "birthplace": decrypt_data(result[2]),
-            "name": decrypt_data(result[3]),
-        }
-    return None
 
 def split_message(text, max_length=2000):
     """テキストを max_length ごとに分割してリストとして返す"""
