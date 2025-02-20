@@ -91,62 +91,19 @@ def miniapp_form():
 
 @handler.add(MessageEvent, message=TextMessage)
 def handle_message(event):
-    """
-    1. ユーザー情報（生年月日/生まれた時間/市区町村/氏名）が未完了の場合：
-       - 次に入力すべき項目を案内し、入力をそのままDBに保存
-       - 全部揃ったら「登録完了」と伝える
-
-    2. ユーザー情報が完了している場合：
-       - ユーザーが「占い: 〇〇」と入力 -> 〇〇をトピックとして占い結果を返す
-       - それ以外 -> ヘルプ的メッセージを返す
-    """
     user_id = event.source.user_id
     user_message = event.message.text.strip()
 
-    user_info = get_user_info(user_id)
-
-    # まだDBにレコードがなければ初期化（すべて "未入力" の状態）
-    if not user_info:
-        initialize_user_info(user_id)
+    if user_message == "登録":
+        reply = "こちらのリンクからユーザー情報を登録してください。\nhttps://your-render-url/miniapp"
+    elif user_message == "今月の運勢":
         user_info = get_user_info(user_id)
-
-    # すべての項目が登録済みかどうか
-    if is_user_info_complete(user_info):
-        # すべて登録済み → 占いのトピック指定かどうかで分岐
-        if user_message.startswith("占い:"):
-            topic = user_message.replace("占い:", "").strip()
-            if topic:
-                # ユーザーが指定したトピックに対して占いを実施
-                fortune_text = get_fortune_response(user_info, topic)
-                send_long_text(event.reply_token, fortune_text)
-                return  # ここで終了
-            else:
-                reply = "占いたい内容を指定してください。例：「占い: 仕事運」"
+        if user_info:
+            reply = get_fortune_response(user_info)
         else:
-            reply = (
-                "占いたい内容を指定してください。\n"
-                "例：「占い: 今月の運勢」「占い: 仕事運」「占い: 恋愛運」"
-            )
+            reply = "まずは「登録」と送信し、情報を登録してください。"
     else:
-        # 登録が完了していない場合
-        next_field = get_next_missing_field(user_info)
-        if user_message.startswith("占い:"):
-            reply = f"まだ登録が完了していません。まずは {FIELD_PROMPTS[next_field]}"
-        else:
-            field_stored, error_msg = store_user_input(user_id, next_field, user_message)
-            if not field_stored:
-                reply = error_msg
-            else:
-                user_info = get_user_info(user_id)
-                if is_user_info_complete(user_info):
-                    reply = (
-                        "すべての登録が完了しました！\n"
-                        "占いたい内容を指定してください。\n"
-                        "例：「占い: 今月の運勢」「占い: 仕事運」「占い: 恋愛運」"
-                    )
-                else:
-                    new_next_field = get_next_missing_field(user_info)
-                    reply = FIELD_PROMPTS[new_next_field]
+        reply = "「登録」と送信すると、ユーザー情報の登録ページが開きます。"
 
     line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply))
 
@@ -212,28 +169,26 @@ def store_user_input(user_id, field, value):
     update_user_info(user_id, field, value)
     return (True, None)
 
-def save_user_info(user_id, birthdate, birthtime, birthplace, name):
-    """ユーザー情報をDBに保存（初回または更新）"""
-    with db_lock:
-        conn = sqlite3.connect("users.db", check_same_thread=False)
-        c = conn.cursor()
-        c.execute("""
-            INSERT INTO users (user_id, birthdate, birthtime, birthplace, name)
-            VALUES (?, ?, ?, ?, ?)
-            ON CONFLICT(user_id) DO UPDATE SET
-                birthdate=excluded.birthdate,
-                birthtime=excluded.birthtime,
-                birthplace=excluded.birthplace,
-                name=excluded.name
-        """, (
-            user_id,
-            encrypt_data(str(birthdate)),
-            encrypt_data(birthtime),
-            encrypt_data(birthplace),
-            encrypt_data(name)
-        ))
-        conn.commit()
-        conn.close()
+@app.route("/save_user_info", methods=["POST"])
+def save_user_info():
+    """ミニアプリから送られたデータを保存"""
+    data = request.json
+    birthdate = data.get("birthdate")
+    birthtime = data.get("birthtime")
+    birthplace = data.get("birthplace")
+    name = data.get("name")
+
+    # データベースに保存
+    conn = sqlite3.connect("users.db", check_same_thread=False)
+    c = conn.cursor()
+    c.execute("""
+        INSERT INTO users (birthdate, birthtime, birthplace, name)
+        VALUES (?, ?, ?, ?)
+    """, (birthdate, birthtime, birthplace, name))
+    conn.commit()
+    conn.close()
+
+    return jsonify({"status": "success", "message": "ユーザー情報を保存しました"})
 
 def update_user_info(user_id, field, value):
     """指定フィールドをDBで更新する"""
