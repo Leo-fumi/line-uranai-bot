@@ -100,18 +100,16 @@ def handle_message(event):
     user_message = event.message.text.strip()
 
     if user_message == "登録":
-        # ユーザーにLIFFページのURLを案内
-        # 例：デプロイ先のURL + /liff_form にアクセスしてもらう
+        # 登録の場合はLIFFフォームのURLを返す
         reply = "こちらのリンクからユーザー情報を登録してください。\n" \
                 "https://line-uranai-bot.onrender.com/liff_form"
-    elif user_message == "今月の運勢":
+    else:
         user_info = get_user_info(user_id)
         if user_info:
-            reply = get_fortune_response(user_info, topic="今月の運勢")
+            # ユーザーが送信したテキストそのものを希望テーマとして使用
+            reply = get_fortune_response(user_info, topic=user_message)
         else:
             reply = "まずは「登録」と送信し、情報を登録してください。"
-    else:
-        reply = "「登録」と送信すると、ユーザー情報の登録ページが開きます。"
 
     try:
         line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply))
@@ -202,7 +200,7 @@ def send_long_text(reply_token, text):
     line_bot_api.reply_message(reply_token, messages)
 
 def get_fortune_response(user_info, topic):
-    """ユーザー情報とトピックをもとに、詳細な占い結果を生成する"""
+    """ユーザー情報と希望テーマ（topic）をもとに、詳細な占い結果を生成する"""
     client = OpenAI(api_key=OPENAI_API_KEY)
 
     prompt = f"""
