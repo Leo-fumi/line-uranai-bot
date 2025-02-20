@@ -26,7 +26,7 @@ LINE_CHANNEL_SECRET = os.getenv("LINE_CHANNEL_SECRET")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 ENCRYPTION_KEY = os.getenv("ENCRYPTION_KEY")
 # LIFF用のID（LINE Developersコンソールで作成したLIFFアプリのLIFF ID）
-LINE_LIFF_ID = os.getenv("LINE_LIFF_ID", "<YOUR_LIFF_ID>")
+LINE_LIFF_ID = os.getenv("LINE_LIFF_ID", "2006941872-aNYDpZOY")
 
 if not ENCRYPTION_KEY:
     raise ValueError("暗号化キー（ENCRYPTION_KEY）が設定されていません！")
@@ -103,7 +103,7 @@ def handle_message(event):
         # ユーザーにLIFFページのURLを案内
         # 例：デプロイ先のURL + /liff_form にアクセスしてもらう
         reply = "こちらのリンクからユーザー情報を登録してください。\n" \
-                "https://<YOUR_DOMAIN>/liff_form"
+                "https://line-uranai-bot.onrender.com/liff_form"
     elif user_message == "今月の運勢":
         user_info = get_user_info(user_id)
         if user_info:
