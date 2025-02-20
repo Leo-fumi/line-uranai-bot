@@ -95,7 +95,7 @@ def handle_message(event):
     user_message = event.message.text.strip()
 
     if user_message == "登録":
-        reply = "こちらのリンクからユーザー情報を登録してください。\nhttps://your-render-url/miniapp"
+        reply = "こちらのリンクからユーザー情報を登録してください。\nhttps://line-uranai-bot.onrender.com/miniapp"
     elif user_message == "今月の運勢":
         user_info = get_user_info(user_id)
         if user_info:
