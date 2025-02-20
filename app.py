@@ -2,7 +2,7 @@ import datetime
 from openai import OpenAI
 import os
 import sqlite3
-from flask import Flask, request, render_template
+from flask import Flask, request, render_template, jsonify
 from linebot import LineBotApi, WebhookHandler
 from linebot.models import MessageEvent, TextMessage, TextSendMessage
 import threading
