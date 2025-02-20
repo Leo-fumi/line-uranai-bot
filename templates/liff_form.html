@@ -29,12 +29,12 @@
 <button onclick="sendData()">登録</button>
 
 <script>
-  // サーバーから渡された LIFF ID
+  // サーバーから渡された LIFF ID（テンプレートエンジンで差し替え）
   const liffId = "{{ liff_id }}";
 
   async function main() {
-    // LIFF初期化
-    await liff.init({ 2006941872-aNYDpZOY });
+    // LIFF初期化：正しいキーを指定
+    await liff.init({ liffId: liffId });
     // 未ログインならログインさせる
     if (!liff.isLoggedIn()) {
       liff.login();
