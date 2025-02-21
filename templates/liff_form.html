@@ -2,31 +2,103 @@
 <html lang="ja">
 <head>
   <meta charset="UTF-8">
-  <title>ユーザー情報登録(LIFF)</title>
+  <title>AI鑑定『全』 - ユーザー情報登録</title>
   <!-- LIFF SDK -->
   <script src="https://static.line-scdn.net/liff/edge/2.1/sdk.js"></script>
+  <!-- Normalize CSS -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/normalize/8.0.1/normalize.css">
+  <style>
+    body {
+      background: #f5f7fa;
+      font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+      margin: 0;
+      padding: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+    }
+    .container {
+      background: #ffffff;
+      padding: 30px 20px;
+      max-width: 400px;
+      width: 90%;
+      border-radius: 8px;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+      text-align: center;
+    }
+    .container h1 {
+      margin: 0 0 10px;
+      font-size: 24px;
+      color: #333333;
+    }
+    .container p.description {
+      font-size: 14px;
+      color: #555555;
+      margin-bottom: 20px;
+    }
+    .form-group {
+      margin-bottom: 15px;
+      text-align: left;
+    }
+    .form-group label {
+      display: block;
+      margin-bottom: 5px;
+      font-size: 14px;
+      color: #444444;
+    }
+    .form-group input {
+      width: 100%;
+      padding: 10px;
+      font-size: 14px;
+      border: 1px solid #cccccc;
+      border-radius: 4px;
+      box-sizing: border-box;
+    }
+    .submit-btn {
+      width: 100%;
+      padding: 12px;
+      background-color: #0066cc;
+      color: #ffffff;
+      border: none;
+      font-size: 16px;
+      border-radius: 4px;
+      cursor: pointer;
+      margin-top: 10px;
+    }
+    .submit-btn:hover {
+      background-color: #005bb5;
+    }
+    .security-note {
+      margin-top: 15px;
+      font-size: 12px;
+      color: #888888;
+    }
+  </style>
 </head>
 <body>
-<h1>ユーザー情報登録</h1>
-
-<!-- 入力フォーム -->
-<p>
-  <label>生年月日:</label>
-  <input type="date" id="birthdate">
-</p>
-<p>
-  <label>生まれた時間:</label>
-  <input type="time" id="birthtime">
-</p>
-<p>
-  <label>生まれた市区町村:</label>
-  <input type="text" id="birthplace" placeholder="例: 東京都新宿区">
-</p>
-<p>
-  <label>氏名:</label>
-  <input type="text" id="name" placeholder="山田 太郎">
-</p>
-<button onclick="sendData()">登録</button>
+<div class="container">
+  <h1>AI鑑定『全』</h1>
+  <p class="description">本格的な占い鑑定を提供します。<br>お客様の情報は最新の暗号化技術で保護され、安全に管理されています。</p>
+  <div class="form-group">
+    <label for="birthdate">生年月日:</label>
+    <input type="date" id="birthdate">
+  </div>
+  <div class="form-group">
+    <label for="birthtime">生まれた時間:</label>
+    <input type="time" id="birthtime">
+  </div>
+  <div class="form-group">
+    <label for="birthplace">生まれた市区町村:</label>
+    <input type="text" id="birthplace" placeholder="例: 東京都新宿区">
+  </div>
+  <div class="form-group">
+    <label for="name">氏名:</label>
+    <input type="text" id="name" placeholder="山田 太郎">
+  </div>
+  <button class="submit-btn" onclick="sendData()">登録</button>
+  <p class="security-note">※ 入力情報は全て暗号化され、安全に管理されます。</p>
+</div>
 
 <script>
   // サーバーから渡された LIFF ID（テンプレートエンジンで差し替え）
@@ -50,7 +122,7 @@
       const profile = await liff.getProfile();
       const userId = profile.userId; // これをサーバーに送る
 
-      // フォームから取得
+      // フォームから値を取得
       const birthdate = document.getElementById("birthdate").value;
       const birthtime = document.getElementById("birthtime").value;
       const birthplace = document.getElementById("birthplace").value;
